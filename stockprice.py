@@ -832,9 +832,10 @@ def main() -> None:
         active_crises = st.session_state.crisis_periods
         scope_options = ["Full Selected Period"] + [f"Crisis: {name}" for name in active_crises.keys()]
 
+        index_options = ["All Indexes (Combined)"] + list(selected)
         col_opt1, col_opt2, col_opt3 = st.columns(3)
         with col_opt1:
-            target_index = st.selectbox("Select Index for Regime Breakdown", selected)
+            target_index = st.selectbox("Select Index for Regime Breakdown", index_options)
         with col_opt2:
             scope = st.selectbox("Analysis Scope", scope_options)
         with col_opt3:
@@ -848,33 +849,73 @@ def main() -> None:
         with c_p2:
             pelt_pen = st.slider("PELT Penalty Multiplier", 1.0, 15.0, 3.5, step=0.5)
 
+        is_all_indexes = (target_index == "All Indexes (Combined)")
+
         # Filter series for change-point detection
-        sub_vol = period_volatility[period_volatility["Index"] == target_index].sort_values("Date")
+        if is_all_indexes:
+            sub_vol = period_volatility[period_volatility["Index"].isin(selected)].sort_values("Date")
+        else:
+            sub_vol = period_volatility[period_volatility["Index"] == target_index].sort_values("Date")
+
         if scope.startswith("Crisis: "):
             c_name = scope.replace("Crisis: ", "")
             if c_name in active_crises:
                 c_s, c_e = active_crises[c_name]
                 sub_vol = sub_vol[sub_vol["Date"].between(c_s, c_e)]
 
-        if len(sub_vol) < 25:
-            st.warning(f"Not enough observations ({len(sub_vol)}) in this scope for change point detection.")
+        if is_all_indexes:
+            composite = (
+                sub_vol.groupby("Date")["GARCH Volatility (%)"]
+                .mean()
+                .reset_index()
+                .sort_values("Date")
+            )
+            dates = composite["Date"]
+            vol_vals = composite["GARCH Volatility (%)"].to_numpy()
         else:
             dates = sub_vol["Date"]
             vol_vals = sub_vol["GARCH Volatility (%)"].to_numpy()
 
+        if len(vol_vals) < 25:
+            st.warning(f"Not enough observations ({len(vol_vals)}) in this scope for change point detection.")
+        else:
             binseg_regimes = detect_change_points(vol_vals, dates, method="binseg", n_bkps=bkps_input)
             pelt_regimes = detect_change_points(vol_vals, dates, method="pelt", pen_multiplier=pelt_pen)
 
             fig_cp = go.Figure()
-            fig_cp.add_trace(
-                go.Scatter(
-                    x=dates,
-                    y=vol_vals,
-                    mode="lines",
-                    name=f"{target_index} GARCH Volatility",
-                    line=dict(color="#2980b9", width=2),
+            if is_all_indexes:
+                # Plot every selected index line
+                for idx in selected:
+                    idx_sub = sub_vol[sub_vol["Index"] == idx]
+                    if not idx_sub.empty:
+                        fig_cp.add_trace(
+                            go.Scatter(
+                                x=idx_sub["Date"],
+                                y=idx_sub["GARCH Volatility (%)"],
+                                mode="lines",
+                                name=idx,
+                            )
+                        )
+                # Plot composite average line
+                fig_cp.add_trace(
+                    go.Scatter(
+                        x=dates,
+                        y=vol_vals,
+                        mode="lines",
+                        name="Composite Mean",
+                        line=dict(color="#2c3e50", width=2.5, dash="dot"),
+                    )
                 )
-            )
+            else:
+                fig_cp.add_trace(
+                    go.Scatter(
+                        x=dates,
+                        y=vol_vals,
+                        mode="lines",
+                        name=f"{target_index} GARCH Volatility",
+                        line=dict(color="#2980b9", width=2),
+                    )
+                )
 
             # Draw Regime lines
             if algo_choice in ["Binary Segmentation", "Both (Side-by-Side)"]:
@@ -895,13 +936,18 @@ def main() -> None:
                         annotation_position="bottom right",
                     )
 
+            chart_title = (
+                f"Volatility Regime Breaks (All Indexes Combined - {scope})"
+                if is_all_indexes
+                else f"Volatility Regime Breaks ({target_index} - {scope})"
+            )
             fig_cp.update_layout(
-                title=f"Volatility Regime Breaks ({target_index} - {scope})",
+                title=chart_title,
                 xaxis_title="Date",
                 yaxis_title="GARCH Volatility (%)",
                 hovermode="x unified",
             )
-            render_mobile_chart(fig_cp, height=390)
+            render_mobile_chart(fig_cp, height=410)
 
             rcol1, rcol2 = st.columns(2)
             with rcol1:
