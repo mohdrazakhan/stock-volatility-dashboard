@@ -357,6 +357,47 @@ def run_dynamic_crisis_comparison(
     return pd.DataFrame(stat_results), pd.DataFrame(distribution_samples)
 
 
+def render_mobile_chart(
+    fig: go.Figure,
+    height: int = 370,
+    legend_top: bool = True,
+) -> None:
+    """Render Plotly figure with mobile-optimized layout, margins, and touch config."""
+    updates = dict(
+        height=height,
+        autosize=True,
+        margin=dict(l=8, r=8, t=38, b=25),
+        hoverlabel=dict(font_size=11),
+    )
+    if legend_top:
+        updates["legend"] = dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="left",
+            x=0,
+            font=dict(size=10),
+            bgcolor="rgba(255, 255, 255, 0.4)",
+        )
+    fig.update_layout(**updates)
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        config={
+            "responsive": True,
+            "displaylogo": False,
+            "modeBarButtonsToRemove": [
+                "lasso2d",
+                "select2d",
+                "zoomIn2d",
+                "zoomOut2d",
+                "autoScale2d",
+            ],
+            "scrollZoom": False,
+        },
+    )
+
+
 def generate_multi_crisis_summary(
     data: pd.DataFrame,
     volatility: pd.DataFrame,
@@ -391,6 +432,58 @@ def generate_multi_crisis_summary(
 
 
 def main() -> None:
+    st.markdown(
+        """
+        <style>
+        /* Mobile-First Responsive Adjustments */
+        @media (max-width: 768px) {
+            .block-container {
+                padding-top: 1rem !important;
+                padding-bottom: 2rem !important;
+                padding-left: 0.5rem !important;
+                padding-right: 0.5rem !important;
+            }
+            /* Smooth Horizontal Swipeable Tabs on Mobile */
+            .stTabs [data-baseweb="tab-list"] {
+                gap: 4px;
+                overflow-x: auto !important;
+                overflow-y: hidden !important;
+                flex-wrap: nowrap !important;
+                -webkit-overflow-scrolling: touch;
+                scrollbar-width: thin;
+            }
+            .stTabs [data-baseweb="tab"] {
+                padding: 6px 12px !important;
+                font-size: 0.82rem !important;
+                white-space: nowrap !important;
+            }
+            /* Scale Metrics & Headers for Mobile Screens */
+            [data-testid="stMetricValue"] {
+                font-size: 1.25rem !important;
+            }
+            [data-testid="stMetricLabel"] {
+                font-size: 0.75rem !important;
+            }
+            h1 { font-size: 1.45rem !important; }
+            h2 { font-size: 1.25rem !important; }
+            h3 { font-size: 1.1rem !important; }
+            h4 { font-size: 0.98rem !important; }
+            /* Expand Plotly containers to edge on phones */
+            .js-plotly-plot, .plot-container {
+                width: 100% !important;
+                max-width: 100vw !important;
+            }
+            /* Scrollable tables on mobile */
+            [data-testid="stDataFrame"] {
+                max-width: 100vw !important;
+                overflow-x: auto !important;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     st.title("📈 Global Stock Index Volatility & Crisis Analytics")
     st.caption(
         "Interactive Econometric Suite: Stationarity (ADF), ARCH Effects, 30D Rolling & GARCH(1,1), "
@@ -577,8 +670,8 @@ def main() -> None:
             title="Index Closing Prices",
             labels={"Close": "Closing Price"},
         )
-        fig_close.update_layout(hovermode="x unified", height=450)
-        st.plotly_chart(fig_close, use_container_width=True)
+        fig_close.update_layout(hovermode="x unified")
+        render_mobile_chart(fig_close, height=370)
 
         st.markdown("#### Daily Return Series (%) with Volatility Bursts")
         fig_returns = px.line(
@@ -590,8 +683,8 @@ def main() -> None:
             labels={"Daily Return (%)": "Return (%)"},
         )
         fig_returns.add_hline(y=0, line_dash="dash", line_color="black", opacity=0.5)
-        fig_returns.update_layout(hovermode="x unified", height=450)
-        st.plotly_chart(fig_returns, use_container_width=True)
+        fig_returns.update_layout(hovermode="x unified")
+        render_mobile_chart(fig_returns, height=370)
 
         st.markdown("#### Daily Return Distributions (Histograms & Tails)")
         fig_hist = px.histogram(
@@ -599,13 +692,12 @@ def main() -> None:
             x="Daily Return (%)",
             color="Index",
             marginal="box",
-            nbins=120,
+            nbins=100,
             barmode="overlay",
             opacity=0.6,
-            title="Return Distributions with Box Marginals (Fat Tail Inspection)",
+            title="Return Distributions with Box Marginals",
         )
-        fig_hist.update_layout(height=450)
-        st.plotly_chart(fig_hist, use_container_width=True)
+        render_mobile_chart(fig_hist, height=370)
 
     # -------------------------------------------------------------
     # TAB 2: STATIONARITY & ARCH TESTS
@@ -648,8 +740,8 @@ def main() -> None:
             color="Index",
             title="Squared Daily Returns (Empirical Volatility Bursts)",
         )
-        fig_sq.update_layout(height=420, hovermode="x unified")
-        st.plotly_chart(fig_sq, use_container_width=True)
+        fig_sq.update_layout(hovermode="x unified")
+        render_mobile_chart(fig_sq, height=360)
 
     # -------------------------------------------------------------
     # TAB 3: ROLLING VOLATILITY & GARCH(1,1)
@@ -676,8 +768,8 @@ def main() -> None:
             line_dash="Model",
             title="Rolling vs GARCH(1,1) Conditional Volatility Comparison",
         )
-        fig_vol.update_layout(height=500, hovermode="x unified")
-        st.plotly_chart(fig_vol, use_container_width=True)
+        fig_vol.update_layout(hovermode="x unified")
+        render_mobile_chart(fig_vol, height=420)
 
         col_left, col_right = st.columns(2)
         with col_left:
@@ -725,8 +817,7 @@ def main() -> None:
             markers=True,
             title=f"{forecast_horizon}-Day Ahead Term Structure of Volatility",
         )
-        fig_fc.update_layout(height=420)
-        st.plotly_chart(fig_fc, use_container_width=True)
+        render_mobile_chart(fig_fc, height=360)
 
     # -------------------------------------------------------------
     # TAB 4: REGIME CHANGE POINT DETECTION (PELT & BINSEG)
@@ -808,10 +899,9 @@ def main() -> None:
                 title=f"Volatility Regime Breaks ({target_index} - {scope})",
                 xaxis_title="Date",
                 yaxis_title="GARCH Volatility (%)",
-                height=480,
                 hovermode="x unified",
             )
-            st.plotly_chart(fig_cp, use_container_width=True)
+            render_mobile_chart(fig_cp, height=390)
 
             rcol1, rcol2 = st.columns(2)
             with rcol1:
@@ -891,8 +981,7 @@ def main() -> None:
                     barmode="group",
                     title="Average GARCH Volatility Across Defined Crisis Windows",
                 )
-                fig_mbar.update_layout(height=420)
-                st.plotly_chart(fig_mbar, use_container_width=True)
+                render_mobile_chart(fig_mbar, height=360)
 
             st.markdown("---")
             st.markdown("#### ⚔️ Head-to-Head Hypothesis Testing (Welch's T-Test & Mann-Whitney U)")
@@ -985,8 +1074,7 @@ def main() -> None:
                                 title=f"{metric_choice} Distribution: {crisis_a_name} vs {crisis_b_name}",
                                 color_discrete_sequence=["#e74c3c", "#3498db"],
                             )
-                            fig_box.update_layout(height=460)
-                            st.plotly_chart(fig_box, use_container_width=True)
+                            render_mobile_chart(fig_box, height=380)
 
                         # Volatility Correlation Heatmaps during Crises
                         st.markdown("#### Cross-Index Volatility Correlations")
@@ -999,16 +1087,15 @@ def main() -> None:
                                 & volatility["Date"].between(crisis_a_dates[0], crisis_a_dates[1])
                             ].pivot(index="Date", columns="Index", values="GARCH Volatility (%)").corr()
                             if mat_a.shape[0] >= 2:
-                                st.plotly_chart(
-                                    px.imshow(
-                                        mat_a,
-                                        text_auto=".2f",
-                                        zmin=-1,
-                                        zmax=1,
-                                        color_continuous_scale="RdBu_r",
-                                    ),
-                                    use_container_width=True,
+                                fig_mat_a = px.imshow(
+                                    mat_a,
+                                    text_auto=".2f",
+                                    zmin=-1,
+                                    zmax=1,
+                                    color_continuous_scale="RdBu_r",
+                                    title=f"{crisis_a_name} Correlation",
                                 )
+                                render_mobile_chart(fig_mat_a, height=320, legend_top=False)
                             else:
                                 st.info(f"Select at least 2 indexes with {crisis_a_name} data.")
 
@@ -1019,16 +1106,15 @@ def main() -> None:
                                 & volatility["Date"].between(crisis_b_dates[0], crisis_b_dates[1])
                             ].pivot(index="Date", columns="Index", values="GARCH Volatility (%)").corr()
                             if mat_b.shape[0] >= 2:
-                                st.plotly_chart(
-                                    px.imshow(
-                                        mat_b,
-                                        text_auto=".2f",
-                                        zmin=-1,
-                                        zmax=1,
-                                        color_continuous_scale="RdBu_r",
-                                    ),
-                                    use_container_width=True,
+                                fig_mat_b = px.imshow(
+                                    mat_b,
+                                    text_auto=".2f",
+                                    zmin=-1,
+                                    zmax=1,
+                                    color_continuous_scale="RdBu_r",
+                                    title=f"{crisis_b_name} Correlation",
                                 )
+                                render_mobile_chart(fig_mat_b, height=320, legend_top=False)
                             else:
                                 st.info(f"Select at least 2 indexes with {crisis_b_name} data.")
 
