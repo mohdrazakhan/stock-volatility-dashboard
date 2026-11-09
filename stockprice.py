@@ -1,4 +1,4 @@
-"""Interactive Global Stock Index Volatility & Crisis Analysis Dashboard.
+"""Interactive Global Stock Index Volatility & Dynamic Crisis Analytics Dashboard.
 
 Runs:
 - Daily Return Calculation & Distribution
@@ -7,7 +7,8 @@ Runs:
 - 30-Day Rolling Window Volatility
 - GARCH(1,1) Volatility Modeling & Forecasting
 - Regime Change Point Detection (PELT & Binary Segmentation)
-- Statistical Crisis Comparison (2008 GFC vs COVID-19 via Welch's T-Test & Mann-Whitney U Test)
+- Dynamic Multi-Crisis Management (Add, Remove, and Compare any Crisis Windows)
+- Statistical Crisis Comparison (Welch's T-Test & Mann-Whitney U Test between any two crises)
 
 Run with:
     streamlit run stockprice.py
@@ -31,10 +32,18 @@ from statsmodels.tsa.stattools import adfuller
 DATA_PATH = Path(__file__).with_name("indexData.csv")
 DEFAULT_INDEXES = ["N225", "IXIC", "GDAXI", "NSEI", "000001.SS"]
 
-# Canonical Crisis Periods
-CRISIS_PERIODS = {
+# Default Canonical Crisis Periods
+DEFAULT_CRISIS_PERIODS = {
     "2008 GFC": (pd.Timestamp("2008-09-01"), pd.Timestamp("2009-03-31")),
     "COVID-19": (pd.Timestamp("2020-02-01"), pd.Timestamp("2020-06-30")),
+}
+
+# Historical crisis presets for 1-click addition
+CRISIS_PRESETS = {
+    "Dot-Com Bubble Burst": (pd.Timestamp("2000-03-10"), pd.Timestamp("2002-10-09")),
+    "European Debt Crisis": (pd.Timestamp("2011-05-01"), pd.Timestamp("2012-07-31")),
+    "1997 Asian Financial Crisis": (pd.Timestamp("1997-07-01"), pd.Timestamp("1998-12-31")),
+    "2015-16 Market Selloff": (pd.Timestamp("2015-08-01"), pd.Timestamp("2016-02-28")),
 }
 
 st.set_page_config(
@@ -265,14 +274,18 @@ def detect_change_points(
     return results
 
 
-def run_crisis_statistical_comparison(
+def run_dynamic_crisis_comparison(
     data: pd.DataFrame,
     volatility: pd.DataFrame,
     indexes: tuple[str, ...],
+    crisis_a_name: str,
+    crisis_a_dates: Tuple[pd.Timestamp, pd.Timestamp],
+    crisis_b_name: str,
+    crisis_b_dates: Tuple[pd.Timestamp, pd.Timestamp],
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Execute Welch's T-Test and Mann-Whitney U Test comparing 2008 GFC vs COVID-19."""
-    c2008_start, c2008_end = CRISIS_PERIODS["2008 GFC"]
-    covid_start, covid_end = CRISIS_PERIODS["COVID-19"]
+    """Execute Welch's T-Test and Mann-Whitney U Test comparing any two crisis windows."""
+    c_a_start, c_a_end = crisis_a_dates
+    c_b_start, c_b_end = crisis_b_dates
 
     merged = pd.merge(data, volatility, on=["Date", "Index"], how="inner")
 
@@ -287,41 +300,41 @@ def run_crisis_statistical_comparison(
 
     for idx in indexes:
         sub = merged[merged["Index"] == idx]
-        s08 = sub[sub["Date"].between(c2008_start, c2008_end)]
-        scov = sub[sub["Date"].between(covid_start, covid_end)]
+        s_a = sub[sub["Date"].between(c_a_start, c_a_end)]
+        s_b = sub[sub["Date"].between(c_b_start, c_b_end)]
 
-        if len(s08) < 5 or len(scov) < 5:
+        if len(s_a) < 5 or len(s_b) < 5:
             continue
 
         for label, col in metrics:
-            v08 = s08[col].dropna().values
-            vcov = scov[col].dropna().values
+            v_a = s_a[col].dropna().values
+            v_b = s_b[col].dropna().values
 
-            if len(v08) < 5 or len(vcov) < 5:
+            if len(v_a) < 5 or len(v_b) < 5:
                 continue
 
-            t_stat, t_pval = ttest_ind(v08, vcov, equal_var=False)
-            u_stat, u_pval = mannwhitneyu(v08, vcov, alternative="two-sided")
+            t_stat, t_pval = ttest_ind(v_a, v_b, equal_var=False)
+            u_stat, u_pval = mannwhitneyu(v_a, v_b, alternative="two-sided")
 
-            mean08, mean_cov = np.mean(v08), np.mean(vcov)
-            med08, med_cov = np.median(v08), np.median(vcov)
+            mean_a, mean_b = np.mean(v_a), np.mean(v_b)
+            med_a, med_b = np.median(v_a), np.median(v_b)
 
             if "Volatility" in label:
-                higher_crisis = "2008 GFC" if mean08 > mean_cov else "COVID-19"
+                higher_crisis = crisis_a_name if mean_a > mean_b else crisis_b_name
             else:
-                higher_crisis = "COVID-19" if mean_cov > mean08 else "2008 GFC"
+                higher_crisis = crisis_b_name if mean_b > mean_a else crisis_a_name
 
             stat_results.append(
                 {
                     "Index": idx,
                     "Metric": label,
-                    "2008 N": len(v08),
-                    "2008 Mean": mean08,
-                    "2008 Median": med08,
-                    "COVID N": len(vcov),
-                    "COVID Mean": mean_cov,
-                    "COVID Median": med_cov,
-                    "Mean Difference (08 - Cov)": mean08 - mean_cov,
+                    f"{crisis_a_name} N": len(v_a),
+                    f"{crisis_a_name} Mean": mean_a,
+                    f"{crisis_a_name} Median": med_a,
+                    f"{crisis_b_name} N": len(v_b),
+                    f"{crisis_b_name} Mean": mean_b,
+                    f"{crisis_b_name} Median": med_b,
+                    f"Diff ({crisis_a_name} - {crisis_b_name})": mean_a - mean_b,
                     "T-Statistic": t_stat,
                     "T-Test p-val": t_pval,
                     "T-Test Sig (p<0.05)": "Yes" if t_pval < 0.05 else "No",
@@ -332,23 +345,56 @@ def run_crisis_statistical_comparison(
                 }
             )
 
-            for val in v08:
+            for val in v_a:
                 distribution_samples.append(
-                    {"Index": idx, "Crisis": "2008 GFC", "Metric": label, "Value": val}
+                    {"Index": idx, "Crisis": crisis_a_name, "Metric": label, "Value": val}
                 )
-            for val in vcov:
+            for val in v_b:
                 distribution_samples.append(
-                    {"Index": idx, "Crisis": "COVID-19", "Metric": label, "Value": val}
+                    {"Index": idx, "Crisis": crisis_b_name, "Metric": label, "Value": val}
                 )
 
     return pd.DataFrame(stat_results), pd.DataFrame(distribution_samples)
+
+
+def generate_multi_crisis_summary(
+    data: pd.DataFrame,
+    volatility: pd.DataFrame,
+    indexes: tuple[str, ...],
+    crisis_periods: dict[str, Tuple[pd.Timestamp, pd.Timestamp]],
+) -> pd.DataFrame:
+    """Generate overall summary statistics across all active crisis periods."""
+    merged = pd.merge(data, volatility, on=["Date", "Index"], how="inner")
+    rows = []
+    for c_name, (c_start, c_end) in crisis_periods.items():
+        sub_c = merged[merged["Index"].isin(indexes) & merged["Date"].between(c_start, c_end)]
+        if sub_c.empty:
+            continue
+        for idx in indexes:
+            sub_idx = sub_c[sub_c["Index"] == idx]
+            if len(sub_idx) < 3:
+                continue
+            rows.append(
+                {
+                    "Crisis Window": c_name,
+                    "Index": idx,
+                    "Start Date": str(c_start.date()),
+                    "End Date": str(c_end.date()),
+                    "Observations": len(sub_idx),
+                    "Mean GARCH Vol (%)": sub_idx["GARCH Volatility (%)"].mean(),
+                    "Peak GARCH Vol (%)": sub_idx["GARCH Volatility (%)"].max(),
+                    "Mean Rolling Vol (%)": sub_idx["Rolling Volatility"].mean(),
+                    "Mean Daily Return (%)": sub_idx["Daily Return (%)"].mean(),
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 def main() -> None:
     st.title("📈 Global Stock Index Volatility & Crisis Analytics")
     st.caption(
         "Interactive Econometric Suite: Stationarity (ADF), ARCH Effects, 30D Rolling & GARCH(1,1), "
-        "Regime Breaks (PELT & BinSeg), and Crisis Hypothesis Testing (Welch's T-Test & Mann-Whitney U)."
+        "Regime Breaks (PELT & BinSeg), and Dynamic Multi-Crisis Hypothesis Testing (Welch's T-Test & Mann-Whitney U)."
     )
 
     try:
@@ -360,6 +406,13 @@ def main() -> None:
     available = sorted(data["Index"].unique())
     defaults = [name for name in DEFAULT_INDEXES if name in available] or available[:5]
 
+    # Initialize Crisis Periods in Session State
+    if "crisis_periods" not in st.session_state:
+        st.session_state.crisis_periods = dict(DEFAULT_CRISIS_PERIODS)
+
+    min_date = data["Date"].min().date()
+    max_date = data["Date"].max().date()
+
     with st.sidebar:
         st.header("⚙️ Controls & Parameters")
         selected = st.multiselect("Stock Indexes", available, default=defaults)
@@ -369,8 +422,6 @@ def main() -> None:
 
         forecast_horizon = st.slider("GARCH Forecast Horizon (Days)", 5, 90, 30)
 
-        min_date = data["Date"].min().date()
-        max_date = data["Date"].max().date()
         date_range = st.date_input(
             "Analysis Period",
             value=(pd.Timestamp("2000-01-01").date(), max_date),
@@ -379,10 +430,64 @@ def main() -> None:
         )
 
         st.markdown("---")
+        st.subheader("🛡️ Crisis Windows Manager")
+        st.caption("Add, remove, or customize crisis windows dynamically:")
+
+        # List existing crisis windows with delete buttons
+        crisis_items = list(st.session_state.crisis_periods.items())
+        for name, (start_dt, end_dt) in crisis_items:
+            c_col1, c_col2 = st.columns([5, 1])
+            with c_col1:
+                st.markdown(f"**{name}**")
+                st.caption(f"`{start_dt.date()}` to `{end_dt.date()}`")
+            with c_col2:
+                if st.button("🗑️", key=f"del_{name}", help=f"Remove '{name}'"):
+                    del st.session_state.crisis_periods[name]
+                    st.rerun()
+
+        # Add / Preset Crisis Expander
+        with st.expander("➕ Add Crisis Window", expanded=False):
+            # Preset 1-click adder
+            preset_options = [p for p in CRISIS_PRESETS.keys() if p not in st.session_state.crisis_periods]
+            if preset_options:
+                selected_preset = st.selectbox("Select Popular Preset", preset_options)
+                if st.button("Add Preset Window", key="btn_add_preset"):
+                    st.session_state.crisis_periods[selected_preset] = CRISIS_PRESETS[selected_preset]
+                    st.rerun()
+                st.markdown("---")
+
+            # Custom Crisis Form
+            with st.form("custom_crisis_form", clear_on_submit=True):
+                st.markdown("**Add Custom Window:**")
+                custom_name = st.text_input("Crisis Name", placeholder="e.g. 2011 Debt Crisis")
+                custom_dates = st.date_input(
+                    "Crisis Date Range",
+                    value=(pd.Timestamp("2011-05-01").date(), pd.Timestamp("2012-07-31").date()),
+                    min_value=min_date,
+                    max_value=max_date,
+                )
+                submitted = st.form_submit_button("Add Custom Window")
+                if submitted:
+                    if not custom_name.strip():
+                        st.error("Please enter a crisis name.")
+                    elif custom_name.strip() in st.session_state.crisis_periods:
+                        st.error(f"Crisis '{custom_name.strip()}' already exists.")
+                    elif isinstance(custom_dates, (tuple, list)) and len(custom_dates) == 2:
+                        st.session_state.crisis_periods[custom_name.strip()] = (
+                            pd.Timestamp(custom_dates[0]),
+                            pd.Timestamp(custom_dates[1]),
+                        )
+                        st.success(f"Added {custom_name.strip()}!")
+                        st.rerun()
+                    else:
+                        st.error("Please select both start and end dates.")
+
+        if st.button("🔄 Reset to Default Crises"):
+            st.session_state.crisis_periods = dict(DEFAULT_CRISIS_PERIODS)
+            st.rerun()
+
+        st.markdown("---")
         st.caption(f"📁 Dataset: `{DATA_PATH.name}` ({len(data):,} total rows)")
-        st.caption("Crisis Windows:")
-        st.caption("• 2008 GFC: 01-Sep-2008 to 31-Mar-2009")
-        st.caption("• COVID-19: 01-Feb-2020 to 30-Jun-2020")
 
     # Safe Date Range Unpacking
     if isinstance(date_range, (tuple, list)):
@@ -423,7 +528,7 @@ def main() -> None:
             "🔬 Stationarity & ARCH Tests (ADF / ARCH-LM)",
             "📈 30D Rolling & GARCH(1,1)",
             "⚡ Change Point Detection (PELT & BinSeg)",
-            "⚔️ Crisis Comparison (2008 vs COVID: T-Test & U-Test)",
+            "⚔️ Dynamic Crisis Comparison (T-Test & U-Test)",
             "📥 Data & Export",
         ]
     )
@@ -633,16 +738,18 @@ def main() -> None:
             "and **Pruned Exact Linear Time (PELT)**."
         )
 
+        active_crises = st.session_state.crisis_periods
+        scope_options = ["Full Selected Period"] + [f"Crisis: {name}" for name in active_crises.keys()]
+
         col_opt1, col_opt2, col_opt3 = st.columns(3)
         with col_opt1:
             target_index = st.selectbox("Select Index for Regime Breakdown", selected)
         with col_opt2:
-            scope = st.selectbox(
-                "Analysis Scope",
-                ["Full Selected Period", "2008 GFC Period", "COVID-19 Period"],
-            )
+            scope = st.selectbox("Analysis Scope", scope_options)
         with col_opt3:
-            algo_choice = st.radio("Detection Algorithm", ["Both (Side-by-Side)", "Binary Segmentation", "PELT"], horizontal=True)
+            algo_choice = st.radio(
+                "Detection Algorithm", ["Both (Side-by-Side)", "Binary Segmentation", "PELT"], horizontal=True
+            )
 
         c_p1, c_p2 = st.columns(2)
         with c_p1:
@@ -652,10 +759,11 @@ def main() -> None:
 
         # Filter series for change-point detection
         sub_vol = period_volatility[period_volatility["Index"] == target_index].sort_values("Date")
-        if scope == "2008 GFC Period":
-            sub_vol = sub_vol[sub_vol["Date"].between(CRISIS_PERIODS["2008 GFC"][0], CRISIS_PERIODS["2008 GFC"][1])]
-        elif scope == "COVID-19 Period":
-            sub_vol = sub_vol[sub_vol["Date"].between(CRISIS_PERIODS["COVID-19"][0], CRISIS_PERIODS["COVID-19"][1])]
+        if scope.startswith("Crisis: "):
+            c_name = scope.replace("Crisis: ", "")
+            if c_name in active_crises:
+                c_s, c_e = active_crises[c_name]
+                sub_vol = sub_vol[sub_vol["Date"].between(c_s, c_e)]
 
         if len(sub_vol) < 25:
             st.warning(f"Not enough observations ({len(sub_vol)}) in this scope for change point detection.")
@@ -747,96 +855,182 @@ def main() -> None:
                     st.info("No breaks detected.")
 
     # -------------------------------------------------------------
-    # TAB 5: CRISIS STATISTICAL COMPARISON (2008 GFC vs COVID-19)
+    # TAB 5: DYNAMIC CRISIS COMPARISON (T-TEST & MANN-WHITNEY U)
     # -------------------------------------------------------------
     with tab_crises:
-        st.subheader("Crisis Comparison: 2008 GFC vs COVID-19")
-        st.markdown(
-            "> **2008 GFC Period:** `2008-09-01` to `2009-03-31` | "
-            "**COVID-19 Period:** `2020-02-01` to `2020-06-30`"
-        )
-        st.caption(
-            "Hypothesis Testing: **Welch's Independent Two-Sample T-Test** (parametric test for difference in means) "
-            "and **Mann-Whitney U Test** (non-parametric rank-sum test for difference in distributions)."
-        )
+        st.subheader("Dynamic Multi-Crisis Analysis & Statistical Testing")
+        active_crises = st.session_state.crisis_periods
 
-        stat_comparison_df, dist_samples_df = run_crisis_statistical_comparison(
-            data, volatility, tuple(selected)
-        )
-
-        if stat_comparison_df.empty:
-            st.warning("Insufficient overlapping observations across the crisis windows for selected indexes.")
+        if not active_crises:
+            st.warning("No crisis windows currently defined. Please add crisis windows in the sidebar.")
         else:
-            st.markdown("#### Statistical Hypothesis Test Results (2008 GFC vs COVID-19)")
-            st.dataframe(
-                stat_comparison_df.style.format(
-                    {
-                        "2008 Mean": "{:.3f}",
-                        "2008 Median": "{:.3f}",
-                        "COVID Mean": "{:.3f}",
-                        "COVID Median": "{:.3f}",
-                        "Mean Difference (08 - Cov)": "{:.3f}",
-                        "T-Statistic": "{:.3f}",
-                        "T-Test p-val": "{:.4e}",
-                        "Mann-Whitney U": "{:,.0f}",
-                        "U-Test p-val": "{:.4e}",
-                    }
-                ),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-            st.markdown("#### Distribution Comparison (Boxplots & Violins)")
-            metric_choice = st.selectbox(
-                "Select Metric to Visualize",
-                ["GARCH Volatility (%)", "30D Rolling Volatility (%)", "Daily Return (%)"],
-            )
-
-            metric_samples = dist_samples_df[dist_samples_df["Metric"] == metric_choice]
-            if not metric_samples.empty:
-                fig_box = px.box(
-                    metric_samples,
-                    x="Index",
-                    y="Value",
-                    color="Crisis",
-                    points="outliers",
-                    title=f"{metric_choice} Distribution: 2008 GFC vs COVID-19",
-                    color_discrete_map={"2008 GFC": "#e74c3c", "COVID-19": "#3498db"},
+            # Multi-Crisis Overview Table
+            st.markdown("#### 🌐 Multi-Crisis Macro Overview")
+            st.caption("Summary statistics across all active crisis windows for selected indexes:")
+            multi_summary = generate_multi_crisis_summary(data, volatility, tuple(selected), active_crises)
+            if not multi_summary.empty:
+                st.dataframe(
+                    multi_summary.style.format(
+                        {
+                            "Mean GARCH Vol (%)": "{:.2f}%",
+                            "Peak GARCH Vol (%)": "{:.2f}%",
+                            "Mean Rolling Vol (%)": "{:.2f}%",
+                            "Mean Daily Return (%)": "{:.3f}%",
+                        }
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
                 )
-                fig_box.update_layout(height=460)
-                st.plotly_chart(fig_box, use_container_width=True)
 
-            # Volatility Correlation Heatmaps during Crises
-            st.markdown("#### Cross-Index Volatility Correlations by Crisis")
-            ch_col1, ch_col2 = st.columns(2)
-            c2008_start, c2008_end = CRISIS_PERIODS["2008 GFC"]
-            covid_start, covid_end = CRISIS_PERIODS["COVID-19"]
+                # Bar chart comparing mean volatility across crises
+                fig_mbar = px.bar(
+                    multi_summary,
+                    x="Crisis Window",
+                    y="Mean GARCH Vol (%)",
+                    color="Index",
+                    barmode="group",
+                    title="Average GARCH Volatility Across Defined Crisis Windows",
+                )
+                fig_mbar.update_layout(height=420)
+                st.plotly_chart(fig_mbar, use_container_width=True)
 
-            with ch_col1:
-                st.markdown("**2008 GFC Volatility Correlation**")
-                mat08 = volatility[
-                    volatility["Index"].isin(selected) & volatility["Date"].between(c2008_start, c2008_end)
-                ].pivot(index="Date", columns="Index", values="GARCH Volatility (%)").corr()
-                if mat08.shape[0] >= 2:
-                    st.plotly_chart(
-                        px.imshow(mat08, text_auto=".2f", zmin=-1, zmax=1, color_continuous_scale="RdBu_r"),
-                        use_container_width=True,
+            st.markdown("---")
+            st.markdown("#### ⚔️ Head-to-Head Hypothesis Testing (Welch's T-Test & Mann-Whitney U)")
+            st.caption(
+                "Select any two crisis windows to statistically test differences in volatility distributions."
+            )
+
+            crisis_keys = list(active_crises.keys())
+            if len(crisis_keys) < 2:
+                st.info(
+                    "You have only 1 crisis window defined. Please add at least one more crisis window in the sidebar to run two-sample statistical tests."
+                )
+            else:
+                h_col1, h_col2 = st.columns(2)
+                with h_col1:
+                    crisis_a_name = st.selectbox(
+                        "Primary Crisis (Window A)",
+                        crisis_keys,
+                        index=0,
+                        key="sel_crisis_a",
                     )
-                else:
-                    st.info("Select at least 2 indexes with 2008 data.")
-
-            with ch_col2:
-                st.markdown("**COVID-19 Volatility Correlation**")
-                mat_cov = volatility[
-                    volatility["Index"].isin(selected) & volatility["Date"].between(covid_start, covid_end)
-                ].pivot(index="Date", columns="Index", values="GARCH Volatility (%)").corr()
-                if mat_cov.shape[0] >= 2:
-                    st.plotly_chart(
-                        px.imshow(mat_cov, text_auto=".2f", zmin=-1, zmax=1, color_continuous_scale="RdBu_r"),
-                        use_container_width=True,
+                with h_col2:
+                    default_b_idx = 1 if len(crisis_keys) > 1 else 0
+                    crisis_b_name = st.selectbox(
+                        "Comparison Crisis (Window B)",
+                        crisis_keys,
+                        index=default_b_idx,
+                        key="sel_crisis_b",
                     )
+
+                if crisis_a_name == crisis_b_name:
+                    st.warning("Please select two different crisis windows to run hypothesis testing.")
                 else:
-                    st.info("Select at least 2 indexes with COVID data.")
+                    crisis_a_dates = active_crises[crisis_a_name]
+                    crisis_b_dates = active_crises[crisis_b_name]
+
+                    st.markdown(
+                        f"> Comparing **{crisis_a_name}** (`{crisis_a_dates[0].date()}` to `{crisis_a_dates[1].date()}`) "
+                        f"vs. **{crisis_b_name}** (`{crisis_b_dates[0].date()}` to `{crisis_b_dates[1].date()}`)"
+                    )
+
+                    stat_comparison_df, dist_samples_df = run_dynamic_crisis_comparison(
+                        data,
+                        volatility,
+                        tuple(selected),
+                        crisis_a_name,
+                        crisis_a_dates,
+                        crisis_b_name,
+                        crisis_b_dates,
+                    )
+
+                    if stat_comparison_df.empty:
+                        st.warning(
+                            "Insufficient overlapping observations across the selected crises for these indexes."
+                        )
+                    else:
+                        st.dataframe(
+                            stat_comparison_df.style.format(
+                                {
+                                    f"{crisis_a_name} Mean": "{:.3f}",
+                                    f"{crisis_a_name} Median": "{:.3f}",
+                                    f"{crisis_b_name} Mean": "{:.3f}",
+                                    f"{crisis_b_name} Median": "{:.3f}",
+                                    f"Diff ({crisis_a_name} - {crisis_b_name})": "{:.3f}",
+                                    "T-Statistic": "{:.3f}",
+                                    "T-Test p-val": "{:.4e}",
+                                    "Mann-Whitney U": "{:,.0f}",
+                                    "U-Test p-val": "{:.4e}",
+                                }
+                            ),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+                        st.markdown("#### Distribution Comparison (Boxplots & Violins)")
+                        metric_choice = st.selectbox(
+                            "Select Metric to Visualize",
+                            ["GARCH Volatility (%)", "30D Rolling Volatility (%)", "Daily Return (%)"],
+                            key="sel_box_metric",
+                        )
+
+                        metric_samples = dist_samples_df[dist_samples_df["Metric"] == metric_choice]
+                        if not metric_samples.empty:
+                            fig_box = px.box(
+                                metric_samples,
+                                x="Index",
+                                y="Value",
+                                color="Crisis",
+                                points="outliers",
+                                title=f"{metric_choice} Distribution: {crisis_a_name} vs {crisis_b_name}",
+                                color_discrete_sequence=["#e74c3c", "#3498db"],
+                            )
+                            fig_box.update_layout(height=460)
+                            st.plotly_chart(fig_box, use_container_width=True)
+
+                        # Volatility Correlation Heatmaps during Crises
+                        st.markdown("#### Cross-Index Volatility Correlations")
+                        ch_col1, ch_col2 = st.columns(2)
+
+                        with ch_col1:
+                            st.markdown(f"**{crisis_a_name} Volatility Correlation**")
+                            mat_a = volatility[
+                                volatility["Index"].isin(selected)
+                                & volatility["Date"].between(crisis_a_dates[0], crisis_a_dates[1])
+                            ].pivot(index="Date", columns="Index", values="GARCH Volatility (%)").corr()
+                            if mat_a.shape[0] >= 2:
+                                st.plotly_chart(
+                                    px.imshow(
+                                        mat_a,
+                                        text_auto=".2f",
+                                        zmin=-1,
+                                        zmax=1,
+                                        color_continuous_scale="RdBu_r",
+                                    ),
+                                    use_container_width=True,
+                                )
+                            else:
+                                st.info(f"Select at least 2 indexes with {crisis_a_name} data.")
+
+                        with ch_col2:
+                            st.markdown(f"**{crisis_b_name} Volatility Correlation**")
+                            mat_b = volatility[
+                                volatility["Index"].isin(selected)
+                                & volatility["Date"].between(crisis_b_dates[0], crisis_b_dates[1])
+                            ].pivot(index="Date", columns="Index", values="GARCH Volatility (%)").corr()
+                            if mat_b.shape[0] >= 2:
+                                st.plotly_chart(
+                                    px.imshow(
+                                        mat_b,
+                                        text_auto=".2f",
+                                        zmin=-1,
+                                        zmax=1,
+                                        color_continuous_scale="RdBu_r",
+                                    ),
+                                    use_container_width=True,
+                                )
+                            else:
+                                st.info(f"Select at least 2 indexes with {crisis_b_name} data.")
 
     # -------------------------------------------------------------
     # TAB 6: DATA & EXPORT
@@ -854,11 +1048,11 @@ def main() -> None:
                 "text/csv",
             )
         with d_col2:
-            if not stat_comparison_df.empty:
+            if "multi_summary" in locals() and not multi_summary.empty:
                 st.download_button(
-                    "📥 Download Crisis Statistical Comparison (CSV)",
-                    stat_comparison_df.to_csv(index=False).encode("utf-8"),
-                    "crisis-statistical-comparison.csv",
+                    "📥 Download Multi-Crisis Summary (CSV)",
+                    multi_summary.to_csv(index=False).encode("utf-8"),
+                    "multi-crisis-summary.csv",
                     "text/csv",
                 )
 
